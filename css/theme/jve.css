@@ -26,6 +26,12 @@ body {
   background: #26351c;
   text-shadow: none; }
 
+.reveal pre {
+    width: 100%;
+    height: 100%;
+    line-height: 1.1em;
+}
+
 /*********************************************
  * HEADERS
  *********************************************/
