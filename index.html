@@ -4,9 +4,9 @@
 	<head>
 		<meta charset="utf-8">
 
-		<title>SSL/TLS in Mozilla's Infrastructure</title>
+		<title>SSL/TLS for the Pragmatic</title>
 
-		<meta name="description" content="A tour of SSL &amp; TLS, and how it is deployed within Mozilla">
+		<meta name="description" content="A tour of SSL &amp; TLS, its issues, and how we worked around them at Mozilla">
 		<meta name="author" content="Julien Vehent">
 
 		<meta name="apple-mobile-web-app-capable" content="yes" />
@@ -214,7 +214,7 @@ reliability between two communicating applications.
 					<h2>...and an equal number of problems</h2>
 					<ul>
 						<li>Immensely difficult to implement in a fast and secure way</li>
-						<li>Attack surface is huge: cryptanalysis, message padding, timing attacks, implementation bugs, (re)negociation, downgrade, ...</li>
+						<li>Attack surface is huge: cryptanalysis, message padding, timing attacks, implementation bugs, (re)negotiation, downgrade, ...</li>
 						<li>Billions of eCommerce dollars rely on it: huge pressure to fix bugs, no time to redesign.</li>
 						<li>Improving TLS often translates into adding <b>more</b> complexity.
                             More extensions, more ciphers, more edge cases, ... TLS is <b>not</b> getting simpler any time soon!</li>
@@ -417,17 +417,6 @@ Server side cipher ordering
                     </code></pre>
                 </section>
 
-				<section>
-					<h2>Doing TLS right</h2>
-                    <ul>
-                        <li><strike>Ciphersuites ordering</strike></li>
-                        <li>Perfect Forward Secrecy and Diffie-Hellman</li>
-                        <li>AES, in cpu, in software, with GCM or CBC</li>
-                        <li>OCSP Stapling</li>
-                        <li>Session resumption, performance vs security</li>
-                    <ul>
-                </section>
-
                 <section>
                     <h2>PFS and Diffie-Hellman</h2>
                     <h3>TLS security model without PFS</h3>
@@ -487,17 +476,6 @@ prio  ciphersuite                  protocols              pfs_keysize
                     </code></pre>
                 </section>
 
-				<section>
-					<h2>Doing TLS right</h2>
-                    <ul>
-                        <li><strike>Ciphersuites ordering</strike></li>
-                        <li><strike>Perfect Forward Secrecy and Diffie-Hellman</strike></li>
-                        <li>AES, in cpu, in software, with GCM or CBC</li>
-                        <li>OCSP Stapling</li>
-                        <li>Session resumption, performance vs security</li>
-                    <ul>
-                </section>
-
                 <section>
                     <h2><a>A</a>dvanced <a>E</a>ncryption <a>S</a>tandard</h2>
                     <p>Two modes:</p>
@@ -519,35 +497,210 @@ prio  ciphersuite                  protocols              pfs_keysize
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>Prefer AES-128!</h2>
+                    <ul>
+                        <li>AES-128 is faster</li>
+                        <li>AES-128 is more resistant to timing attacks</li>
+                    </ul>
+                    <p><br />
+                       <em> On the choice between AES256 and AES128: I would never consider using AES256,
+                            just like I don’t wear a helmet when I sit inside my car.
+                            It’s too much bother for the epsilon improvement in security.
+                       </em>
+                        Vincent Rijmen, AES co-author, Dec2013
+                    </p>
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>OCSP Stapling</h2>
+                    <p>Handling certificates revocation is hard.</p>
+                    <ol>
+                        <li>CRL became too big to download in browsers</li>
+                        <li>OCSP is unreliable and slows down connections</li>
+                    </ol>
+                    <img src="img/OCSP_Stapling.png" />
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>OCSP Stapling</h2>
+					<pre><code data-trim contenteditable>
+$ openssl s_client -connect mozilla.org:443 -status
+[...]
+OCSP Response Data:
+    OCSP Response Status: successful (0x0)
+    Response Type: Basic OCSP Response
+    Version: 1 (0x0)
+    Responder Id: 4C58CB25F0414F52F428C881439BA6A8A0E692E5
+    Produced At: Nov 15 09:58:00 2014 GMT
+    Responses:
+    Certificate ID:
+      Hash Algorithm: sha1
+      Issuer Name Hash: B8A299F09D061DD5C1588F76CC89FF57092B94DD
+      Issuer Key Hash: 4C58CB25F0414F52F428C881439BA6A8A0E692E5
+      Serial Number: 04E4EB1E7F8C5109DBBF0C1C7F411691
+    Cert Status: good
+    This Update: Nov 15 09:58:00 2014 GMT
+    Next Update: Nov 22 10:13:00 2014 GMT
+                    </code></pre>
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>OCSP Stapling conf</h2>
+                        <p>Apache</p>
+                        <pre><code data-trim contenteditable>
+# in global conf
+SSLStaplingCache        shmcb:/var/run/ocsp(128000)
+
+    <VirtualHost>
+    SSLUseStapling                      on
+    SSLStaplingResponderTimeout         5
+    SSLStaplingReturnResponderErrors    off
+    </VirtualHost>
+                        </code></pre>
+                        <p>Nginx</p>
+                        <pre><code data-trim contenteditable>
+server {
+    ssl_stapling            on;
+    ssl_stapling_verify     on;
+    ssl_trusted_certificate /path/to/root_CA_cert_plus_intermediates;
+    resolver                127.0.0.1;
+}
+                        </code></pre>
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>Session Resumption</h2>
+                    <p>Negotiating session secrets is expensive.<br />Need to allows a client &amp; server to reuse a session secret.</p>
+                    <ol>
+                        <li>Session ID: server caches the session locally, gives an ID to the client, client sends ID with new connections.</li>
+                        <li>Session Ticker: server encrypts session data with local key, hands it to client for resubmission, doesn't keep local cache.</li>
+                    </ol>
+                    <p><br />Both method depend on server security. Compromise the cache or the ticket key == gain access to all session secrets.</p>
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>Using session resumption safely</h2>
+                    <ol>
+                        <li>Limit cache size
+                            <pre><code data-trim contenteditable>
+# nginx
+ssl_session_timeout 5m;
+ssl_session_cache shared:SSL:5m;
+                            </code></pre>
+                            <pre><code data-trim contenteditable>
+# apache
+SSLSessionCache shmcb:/path/to/ssl_gcache_data(5120000)
+                            </code></pre>
+                        </li>
+                        <li>Restart servers regularly to flush old sessions
+                            <pre>
+$ sudo service (nginx|apache2) graceful
+                            </pre>
+                        </li>
+                    </ol>
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>All good?</h2>
+                    <img src="img/Exhausted.jpg" />
                 </section>
 
                 <section>
-                    <h2></h2>
+                    <h2>Now... The Traps</h2>
+                    <ul>
+                        <li>Beware of old clients!</li>
+                        <ul>
+                            <li>Windows XP pre-SP3: SHA1 certs, SSLv3 only</li>
+                            <li>Java 6: no support for DHE &gt; 1024 bits</li>
+                            <li>search engine bots often use old libraries</li>
+                        </ul>
+                        <p><br /></p>
+                        <li>Server support is like snowflakes, there aren't two identical</li>
+                        <ul>
+                            <li>Nginx/Apache depend on the version of OpenSSL</li>
+                            <li>Vendors are typically 2 to 4 years behind standards</li>
+                            <li>AWS ELBs have limited configurability</li>
+                        </ul>
+                    </ul>
+                </section>
+
+                <section>
+                    <h2>Use a Guide</h2>
+                    <ul>
+                        <li><a href="https://wiki.mozilla.org/Security/Server_Side_TLS">https://wiki.mozilla.org/Security/Server_Side_TLS</a></li>
+                        <li><a href="https://www.ssllabs.com/projects/best-practices/">Qualys SSL/TLS Deployment Best Practices</a></li>
+                        <li><a href="https://bettercrypto.org/">https://bettercrypto.org/</a></li>
+                    </ul>
+                    <a href="https://www.feistyduck.com/books/bulletproof-ssl-and-tls/"><img src="img/bulletproof-cover.png"></a>
+                </section>
+
+                <section>
+                    <h2>Use a Tool</h2>
+                    <ul>
+                        <li><a href="https://github.com/jvehent/cipherscan">Cipherscan</a></li>
+                        <li><a href="https://www.ssllabs.com/ssltest/">Qualys SSL Labs</a></li>
+                        <img src="img/ssllabs_jve.png" />
+                    </ul>
+                </section>
+
+                <section>
+                    <h2>helping admins</h2>
+                    <h3>analyze.py <a href="https://github.com/jvehent/cipherscan/blob/master/analyze.py">[link]</a></h3>
+                    <p>Extension of Cipherscan to facilitates configuration evaluation.</p>
+                </section>
+
+                <section>
+                    <h2>cipherscan mozilla.org</h2>
+                        <pre><code data-trim contenteditable>
+$ ./cipherscan mozilla.org
+......
+Target: mozilla.org:443
+
+prio  ciphersuite         protocols                    pfs_keysize
+1     DHE-RSA-AES128-SHA  SSLv3,TLSv1,TLSv1.1,TLSv1.2  DH,1024bits
+2     DHE-RSA-AES256-SHA  SSLv3,TLSv1,TLSv1.1,TLSv1.2  DH,1024bits
+3     AES128-SHA          SSLv3,TLSv1,TLSv1.1,TLSv1.2
+4     AES256-SHA          SSLv3,TLSv1,TLSv1.1,TLSv1.2
+5     DES-CBC3-SHA        SSLv3,TLSv1,TLSv1.1,TLSv1.2
+
+Certificate: trusted, 2048 bit, sha1WithRSAEncryption signature
+TLS ticket lifetime hint: None
+OCSP stapling: supported
+Server side cipher ordering
+                        </code></pre>
+                </section>
+
+                <section>
+                    <h2>analyze.py -t mozilla.org</h2>
+                        <pre><code data-trim contenteditable>
+$ ./analyze.py -t mozilla.org
+mozilla.org:443 has old ssl/tls
+
+Changes needed to match the intermediate level:
+* disable SSLv3
+* consider using a SHA-256 certificate
+* consider using DHE of at least 2048bits and ECC of at least 256bits
+
+Changes needed to match the modern level:
+* remove cipher AES128-SHA
+* remove cipher AES256-SHA
+* remove cipher DES-CBC3-SHA
+* disable TLSv1
+* disable SSLv3
+* use a SHA-256 certificate
+* use DHE of at least 2048bits and ECC of at least 256bits
+                        </code></pre>
+                </section>
+
+                <section>
+                    <h2>analyze.py levels map Mozilla's guidelines</h2>
+                    <img src="img/tls_levels.png" />
+                    <p>use flag <b>-l</b> to evaluate against a specific level</p>
+                </section>
+
+                <section>
+                    <h2>There is much work to do...</h2>
+                    <img src="img/tls_quality_sample.png" />
                 </section>
 
 			</div>
